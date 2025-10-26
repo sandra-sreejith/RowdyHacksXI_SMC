@@ -64,7 +64,7 @@ void setup() {
   pinMode(yPin, INPUT);
   pinMode(buttonPin, INPUT_PULLUP);
   // I2C SLAVE at address 0x08
-  Wire.begin(PLAYER1); // or 
+  Wire.begin(PLAYER2); // or 
  
   Wire.setTimeout(200);
 

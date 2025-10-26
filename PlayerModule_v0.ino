@@ -45,17 +45,12 @@ uint8_t n_display = 0;
 
 
 
- 
-
-
 
 LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
 
 // Forward decls
 void onI2CReceive(int n);
 void onI2CRequest(void);
-
-
 
 
 void setup() {
@@ -73,8 +68,6 @@ void setup() {
   Wire.onRequest(onI2CRequest);
 
     IrReceiver.begin(IR_PIN, ENABLE_LED_FEEDBACK); // start IR receiver
-
-
 }
 
 void loop() {
@@ -252,3 +245,4 @@ memcpy(&(packet[3]),payload,len - 1);
 return len + 2;
   
 }
+

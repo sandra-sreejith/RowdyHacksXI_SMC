@@ -1,0 +1,202 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <stdint.h>
+#include <LiquidCrystal.h>
+#include <IRremote.h>
+
+#define SYNC_BYTE (uint8_t)(0xC8)
+
+#define PLAYER_ADDR (uint8_t)(0x08)   // Player 1
+
+#define period_us (uint32_t)(1000000U) // 1-second scroll period
+
+enum types {
+  INITIALIZE, GAME_START, POKE, GAME_END
+};
+
+enum states {
+  PRE_INIT, PRE_GAME_START, PRE_POKE, HIGH_NOON, UNALIVE
+};
+
+// LCD pin mapping
+const int rs = 8, en = 7, d4 = 5, d5 = 4, d6 = 3, d7 = 2;
+
+// Joystick & button
+int xPin = A0;
+int yPin = A1;
+int buttonPin = 9;
+
+// IR pin
+const uint8_t IR_PIN = 6;
+
+volatile uint8_t rx_buf[7];
+volatile uint8_t rxLen = 0;
+volatile bool rxReady = false;
+
+uint32_t timestamp = micros();
+volatile uint8_t state = PRE_INIT;
+volatile uint8_t n_rounds = 0;
+uint8_t n_display = 0;
+
+LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
+
+// Forward declarations
+void onI2CReceive(int n);
+void onI2CRequest(void);
+int makePacket(uint8_t *packet, uint8_t type, uint32_t *payload);
+
+void setup() {
+  Serial.begin(9600);
+
+  pinMode(xPin, INPUT);
+  pinMode(yPin, INPUT);
+  pinMode(buttonPin, INPUT_PULLUP);
+
+  // Initialize LCD immediately to show something
+  lcd.begin(16, 2);
+  lcd.clear();
+  lcd.print("Waiting for init");
+
+  // I2C SLAVE
+  Wire.begin(PLAYER_ADDR);
+  Wire.setTimeout(200);
+  Wire.onReceive(onI2CReceive);
+  Wire.onRequest(onI2CRequest);
+
+  // IR receiver
+  IrReceiver.begin(IR_PIN, ENABLE_LED_FEEDBACK);
+}
+
+void loop() {
+  // Handle incoming I2C packets
+  if (rxReady) {
+    rxReady = false;
+
+    switch (rx_buf[2]) {
+      case INITIALIZE:
+        state = PRE_GAME_START;
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Howdy, Howdy!");
+        lcd.setCursor(0, 1);
+        lcd.print("Lets Get Rowdy!");
+        break;
+
+      case GAME_START:
+        state = PRE_POKE;
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("Its high noon...");
+        lcd.setCursor(0, 1);
+        lcd.print("Ready your blaster!");
+        break;
+
+      case POKE:
+        state = HIGH_NOON;
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("!FIRE! TIRALOOOO!");
+        lcd.setCursor(0, 1);
+        lcd.print("~~~~~~~~~~~~~~~~");
+        break;
+
+      case GAME_END: {
+        int32_t t_diff = 0;
+        memcpy(&t_diff, &(rx_buf[3]), sizeof(int32_t));
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        if (t_diff > 0) {
+          lcd.print("We won!");
+          lcd.setCursor(0, 1);
+          lcd.print("Ayyyyyyyyy!");
+        } else {
+          lcd.print("We lost!");
+          lcd.setCursor(0, 1);
+          lcd.print("Noooooooo!");
+        }
+        state = PRE_INIT;
+        break;
+      }
+    }
+  }
+
+  // Handle joystick UI for number of rounds
+  if (state == PRE_GAME_START) {
+    int xVal = analogRead(xPin);
+    int button = digitalRead(buttonPin);
+
+    if ((micros() - timestamp) > period_us) {
+      timestamp = micros();
+
+      if (xVal > 600) n_display++;
+      if (xVal < 400 && n_display > 0) n_display--;
+    }
+
+    lcd.setCursor(0, 0);
+    lcd.print("Rounds: ");
+    lcd.print(n_display);
+    lcd.print("   ");
+
+    if (button == LOW) {
+      n_rounds = (n_display > 0) ? n_display : 1;
+    }
+  }
+
+  // Handle IR "death"
+  if (state == HIGH_NOON) {
+    if (IrReceiver.decode()) {
+      state = UNALIVE;
+      IrReceiver.resume();
+    }
+  }
+}
+
+// I2C receive handler (ISR context)
+void onI2CReceive(int n) {
+  rxLen = 0;
+  while (Wire.available() && rxLen < sizeof(rx_buf)) {
+    rx_buf[rxLen++] = (uint8_t)Wire.read();
+  }
+  rxReady = true;
+}
+
+// I2C request handler (master polls)
+void onI2CRequest(void) {
+  switch (state) {
+    case PRE_GAME_START: {
+      if (n_rounds > 0) {
+        uint8_t pkt[7] = {0};
+        uint32_t pload = n_rounds;
+        size_t size_pkt = makePacket(pkt, GAME_START, &pload);
+        Wire.write(pkt, size_pkt);
+      }
+      break;
+    }
+    case UNALIVE: {
+      int32_t pload = 0; // dummy payload
+      uint8_t pkt[7] = {0};
+      size_t size_pkt = makePacket(pkt, GAME_END, &pload);
+      Wire.write(pkt, size_pkt);
+      break;
+    }
+    default:
+      break;
+  }
+}
+
+// Build packet: [SYNC][LEN][TYPE][PAYLOAD...]
+int makePacket(uint8_t *packet, uint8_t type, uint32_t *payload) {
+  int8_t len = ((type == INITIALIZE) || (type == POKE)) ? 1 :
+               (type == GAME_START) ? (sizeof(uint32_t) + 1) :
+               (type == GAME_END)   ? (sizeof(int32_t) + 1) : -1;
+
+  if (len < 0) return -1;
+
+  packet[0] = SYNC_BYTE;
+  packet[1] = len;
+  packet[2] = type;
+  if (payload != NULL && len > 1)
+    memcpy(&(packet[3]), payload, len - 1);
+
+  return len + 2;
+}

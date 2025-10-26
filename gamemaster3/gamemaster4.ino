@@ -9,10 +9,8 @@
 // Packet: [SYNC][LEN][TYPE][PAYLOAD...], LEN counts [TYPE+PAYLOAD], so min LEN=1, max LEN=5
 enum types : uint8_t { INITIALIZE, GAME_START, POKE, GAME_END };
 
-#ifndef LED_BUILTIN
-#define LED_BUILTIN 13
-#endif
-#define LED_PIN LED_BUILTIN
+
+#define LED_PIN 7
 
 static inline void put_u32_be(uint8_t* p, uint32_t v){
   p[0] = (uint8_t)(v >> 24);
@@ -109,7 +107,7 @@ void loop() {
   Wire.beginTransmission(other); Wire.write(pkt, sz); Wire.endTransmission();
 
   // --- 3) Optional randomized delay before starting
-  // delay(random(200, 1200));
+  delay(random(3000, 10000));
 
   // --- 4) LED HIGH + POKE both
   digitalWrite(LED_PIN, HIGH);

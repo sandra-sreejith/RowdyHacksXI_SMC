@@ -85,7 +85,7 @@ void loop() {
  /*
  GAMESTART RECEIVED, PARSE FOR ROUND COUNT, AND TRANSMIT TO OTHER PLAYER
  */
- uint32_t n_rounds = host_buffer[3] | host_buffer[4] | host_buffer[5] | host_buffer[6];
+ uint32_t n_rounds = host_buffer[3];
 uint8_t unaware_player = (first_blood == PLAYER1)?PLAYER2:PLAYER1;
 
 
